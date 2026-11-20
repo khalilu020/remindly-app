@@ -1,0 +1,7 @@
+.android-build-tools/
+.temp/
+mobile_app/build/
+mobile_app/.dart_tool/
+backend/node_modules/
+build_apk.sh
+*.apk
