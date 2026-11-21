@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../widgets/reminder_card.dart';
 import 'add_edit_reminder_screen.dart';
 import 'alarm_ring_screen.dart';
+import 'connect_whatsapp_screen.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -42,6 +43,9 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     NotificationService.instance.onAlarmNotificationTapped = _openAlarmScreen;
     _loadInitialData();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      NotificationService.instance.requestPermissions();
+    });
   }
 
   void _openAlarmScreen(Map<String, dynamic> payload) {
@@ -79,8 +83,15 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _backendStatus = status);
   }
 
-  void _openConnectWhatsApp() {
-    setState(() => _currentTab = 2);
+  Future<void> _openConnectWhatsApp() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ConnectWhatsAppScreen(
+          initialPhoneNumber: _settings.defaultWhatsAppNumber,
+        ),
+      ),
+    );
+    await _refreshBackendStatus();
   }
 
   Future<void> _disconnectWhatsApp() async {
@@ -400,9 +411,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               GestureDetector(
-                onTap: () => connected
-                    ? setState(() => _currentTab = 2)
-                    : _openConnectWhatsApp(),
+                onTap: _openConnectWhatsApp,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 11,

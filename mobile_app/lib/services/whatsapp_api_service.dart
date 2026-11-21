@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
@@ -38,6 +39,19 @@ class WhatsAppApiService {
     return headers;
   }
 
+  /// Wakes up the sleeping container on SnapDeploy if idle
+  Future<void> wakeServer() async {
+    try {
+      await http
+          .post(
+            Uri.parse(
+                'https://snapdeploy.dev/api/public/wake/remindly-bot-cc713'),
+            headers: {'Content-Type': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {}
+  }
+
   /// Checks whether the 24/7 cloud server is reachable and if WhatsApp is linked.
   Future<BackendStatusResult> checkStatus({AppSettings? settings}) async {
     try {
@@ -47,6 +61,19 @@ class WhatsAppApiService {
             headers: _headers,
           )
           .timeout(const Duration(seconds: 8));
+
+      if (response.statusCode == 503 ||
+          response.body.contains('<!DOCTYPE html>') ||
+          response.body.contains('Waking up your container')) {
+        unawaited(wakeServer());
+        return const BackendStatusResult(
+          reachable: false,
+          whatsappConnected: false,
+          status: 'waking_up',
+          statusText: 'Server waking up (~20s)...',
+          error: 'Cloud container is spinning up from idle sleep.',
+        );
+      }
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;

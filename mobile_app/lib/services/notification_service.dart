@@ -41,20 +41,34 @@ class NotificationService {
 
   Future<void> init() async {
     tz_data.initializeTimeZones();
-    if (!_supportsMobileNotifications) {
-      _deviceTimezone = 'UTC';
-      tz.setLocalLocation(tz.getLocation('UTC'));
-      return;
+    tz.Location? localLocation;
+
+    if (_supportsMobileNotifications) {
+      try {
+        final String detected = await FlutterTimezone.getLocalTimezone();
+        _deviceTimezone = detected;
+        try {
+          localLocation = tz.getLocation(detected);
+        } catch (_) {}
+      } catch (_) {}
     }
 
-    try {
-      final String detected = await FlutterTimezone.getLocalTimezone();
-      _deviceTimezone = detected;
-      tz.setLocalLocation(tz.getLocation(detected));
-    } catch (_) {
-      _deviceTimezone = 'UTC';
-      tz.setLocalLocation(tz.getLocation('UTC'));
+    // Fallback: match by actual device timezone offset
+    if (localLocation == null) {
+      try {
+        final offsetMs = DateTime.now().timeZoneOffset.inMilliseconds;
+        for (final loc in tz.timeZoneDatabase.locations.values) {
+          if (loc.currentTimeZone.offset == offsetMs) {
+            localLocation = loc;
+            _deviceTimezone = loc.name;
+            break;
+          }
+        }
+      } catch (_) {}
     }
+
+    localLocation ??= tz.getLocation('UTC');
+    tz.setLocalLocation(localLocation);
 
     // Initialize native Android exact alarm scheduler for background execution
     if (_supportsAndroidAlarmManager) {
@@ -90,6 +104,39 @@ class NotificationService {
       },
     );
 
+    // Explicitly create notification channels with max importance on Android
+    final androidImpl = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+
+    const alarmChannel = AndroidNotificationChannel(
+      _alarmChannelId,
+      'Reminder Alarms',
+      description: 'High-priority loud alarm alerts for scheduled activities',
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+      enableLights: true,
+      audioAttributesUsage: AudioAttributesUsage.alarm,
+    );
+
+    const standardChannel = AndroidNotificationChannel(
+      _notificationChannelId,
+      'Activity Notifications',
+      description: 'Standard reminder notifications for scheduled activities',
+      importance: Importance.high,
+      playSound: true,
+      enableVibration: true,
+    );
+
+    try {
+      await androidImpl?.createNotificationChannel(alarmChannel);
+      await androidImpl?.createNotificationChannel(standardChannel);
+    } catch (_) {}
+  }
+
+  /// Requests notification and exact alarm permissions at runtime when the UI is displayed.
+  Future<void> requestPermissions() async {
+    if (!_supportsMobileNotifications) return;
     try {
       final androidImpl = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
@@ -200,21 +247,18 @@ class NotificationService {
         }
       } else if (reminder.oneTimeDate != null) {
         final date = reminder.oneTimeDate!;
-        final scheduled = tz.TZDateTime(
-          tz.local,
+        final target = DateTime(
           date.year,
           date.month,
           date.day,
           reminder.hour,
           reminder.minute,
+          0,
         );
-        if (scheduled.isAfter(tz.TZDateTime.now(tz.local))) {
-          final exactDateTime = DateTime.fromMillisecondsSinceEpoch(
-            scheduled.millisecondsSinceEpoch,
-          );
+        if (target.isAfter(DateTime.now())) {
           try {
             await AndroidAlarmManager.oneShotAt(
-              exactDateTime,
+              target,
               baseOffset,
               whatsappBackgroundDispatcher,
               exact: true,
@@ -224,7 +268,7 @@ class NotificationService {
           } catch (_) {
             try {
               await AndroidAlarmManager.oneShotAt(
-                exactDateTime,
+                target,
                 baseOffset,
                 whatsappBackgroundDispatcher,
                 exact: false,
@@ -298,15 +342,16 @@ class NotificationService {
       }
     } else if (reminder.oneTimeDate != null) {
       final date = reminder.oneTimeDate!;
-      final scheduled = tz.TZDateTime(
-        tz.local,
+      final target = DateTime(
         date.year,
         date.month,
         date.day,
         reminder.hour,
         reminder.minute,
+        0,
       );
-      if (scheduled.isAfter(tz.TZDateTime.now(tz.local))) {
+      if (target.isAfter(DateTime.now())) {
+        final scheduled = tz.TZDateTime.from(target, tz.local);
         try {
           await _plugin.zonedSchedule(
             baseOffset,
@@ -372,14 +417,17 @@ class NotificationService {
     required int hour,
     required int minute,
   }) {
-    final now = tz.TZDateTime.now(tz.local);
-    var scheduled =
-        tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+    final now = DateTime.now();
+    var scheduled = DateTime(now.year, now.month, now.day, hour, minute, 0);
+
+    if (scheduled.weekday == weekday && scheduled.isAfter(now)) {
+      return tz.TZDateTime.from(scheduled, tz.local);
+    }
 
     while (scheduled.weekday != weekday || !scheduled.isAfter(now)) {
       scheduled = scheduled.add(const Duration(days: 1));
     }
-    return scheduled;
+    return tz.TZDateTime.from(scheduled, tz.local);
   }
 
   NotificationDetails _standardNotificationDetails() {

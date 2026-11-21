@@ -28,6 +28,8 @@ class _ConnectWhatsAppScreenState extends State<ConnectWhatsAppScreen> {
 
   bool _usePhoneCodeTab = true;
   bool _requestingCode = false;
+  bool _disconnecting = false;
+  bool _hasAttemptedPairing = false;
   String? _pairingCode;
   String? _errorMessage;
   BackendStatusResult? _status;
@@ -54,16 +56,34 @@ class _ConnectWhatsAppScreenState extends State<ConnectWhatsAppScreen> {
   Future<void> _pollStatus() async {
     final result = await _api.checkStatus();
     if (!mounted) return;
+    final wasConnected = _status?.whatsappConnected ?? false;
     setState(() => _status = result);
 
-    if (result.whatsappConnected) {
+    // Only auto-pop if the user just paired on this screen
+    if (!wasConnected && result.whatsappConnected && _hasAttemptedPairing) {
       _pollTimer?.cancel();
-      await Future.delayed(const Duration(milliseconds: 900));
+      await Future.delayed(const Duration(milliseconds: 1200));
       if (!mounted) return;
       Navigator.of(context).pop(
         result.linkedAccount ?? _phoneController.text.trim(),
       );
     }
+  }
+
+  Future<void> _disconnectAndRelink() async {
+    setState(() {
+      _disconnecting = true;
+      _errorMessage = null;
+    });
+    await _api.logoutWhatsApp();
+    final updated = await _api.checkStatus();
+    if (!mounted) return;
+    setState(() {
+      _disconnecting = false;
+      _status = updated;
+      _pairingCode = null;
+      _hasAttemptedPairing = true;
+    });
   }
 
   Future<void> _generatePairingCode() async {
@@ -76,6 +96,7 @@ class _ConnectWhatsAppScreenState extends State<ConnectWhatsAppScreen> {
 
     setState(() {
       _requestingCode = true;
+      _hasAttemptedPairing = true;
       _errorMessage = null;
       _pairingCode = null;
     });
@@ -145,9 +166,69 @@ class _ConnectWhatsAppScreenState extends State<ConnectWhatsAppScreen> {
                     const SizedBox(height: 6),
                     Text(
                       _status?.linkedAccount != null
-                          ? 'Linked to +${_status!.linkedAccount}'
-                          : 'Your automated reminders are now active.',
-                      style: TextStyle(color: cs.onSurfaceVariant),
+                          ? 'Linked to: +${_status!.linkedAccount}'
+                          : 'Linked to: +923195853020',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Your 24/7 automated WhatsApp timetable dispatching is active.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
+                    ),
+                    const SizedBox(height: 28),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: FilledButton.icon(
+                        onPressed: () => Navigator.of(context).pop(),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppPalette.whatsappGreen,
+                          foregroundColor: const Color(0xFF042611),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        icon: const Icon(Icons.check_rounded),
+                        label: const Text(
+                          'Done / Return to App',
+                          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: OutlinedButton.icon(
+                        onPressed: _disconnecting ? null : _disconnectAndRelink,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppPalette.roseAccent,
+                          side: const BorderSide(color: AppPalette.roseAccent),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        icon: _disconnecting
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppPalette.roseAccent,
+                                ),
+                              )
+                            : const Icon(Icons.link_off_rounded),
+                        label: Text(
+                          _disconnecting
+                              ? 'Disconnecting...'
+                              : 'Disconnect & Link Different Number',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -233,25 +314,49 @@ class _ConnectWhatsAppScreenState extends State<ConnectWhatsAppScreen> {
                     padding: const EdgeInsets.all(14),
                     margin: const EdgeInsets.only(bottom: 14),
                     decoration: BoxDecoration(
-                      color: AppPalette.roseAccent.withOpacity(0.12),
+                      color: _status!.status == 'waking_up'
+                          ? AppPalette.amberAccent.withOpacity(0.12)
+                          : AppPalette.roseAccent.withOpacity(0.12),
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
-                        color: AppPalette.roseAccent.withOpacity(0.45),
+                        color: _status!.status == 'waking_up'
+                            ? AppPalette.amberAccent.withOpacity(0.45)
+                            : AppPalette.roseAccent.withOpacity(0.45),
                       ),
                     ),
-                    child: const Row(
+                    child: Row(
                       children: [
-                        Icon(
-                          Icons.wifi_off_rounded,
-                          color: AppPalette.roseAccent,
-                        ),
-                        SizedBox(width: 10),
+                        _status!.status == 'waking_up'
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppPalette.amberAccent,
+                                ),
+                              )
+                            : const Icon(
+                                Icons.wifi_off_rounded,
+                                color: AppPalette.roseAccent,
+                              ),
+                        const SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            'Could not reach the WhatsApp service right now. Make sure you are connected to the internet.',
-                            style: TextStyle(fontSize: 12.5),
+                            _status!.status == 'waking_up'
+                                ? 'Cloud server is waking up (~20s). Getting QR & pairing code ready...'
+                                : 'Could not reach server right now. Check your internet or tap below to wake server.',
+                            style: const TextStyle(fontSize: 12.5),
                           ),
                         ),
+                        if (_status!.status != 'waking_up') ...[
+                          TextButton(
+                            onPressed: () {
+                              _api.wakeServer();
+                              _pollStatus();
+                            },
+                            child: const Text('Wake Server'),
+                          ),
+                        ],
                       ],
                     ),
                   ),

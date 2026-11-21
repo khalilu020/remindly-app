@@ -224,9 +224,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                         padding: const EdgeInsets.symmetric(vertical: 10),
                       ),
-                      icon: const Icon(Icons.qr_code_scanner_rounded, size: 16),
+                      icon: const Icon(Icons.qr_code_2_rounded, size: 16),
                       label: Text(
-                        isConnected ? 'Switch Account' : 'Connect QR',
+                        isConnected ? 'Manage WhatsApp' : 'Connect WhatsApp',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ),
