@@ -18,8 +18,8 @@ class NotificationService {
   static final NotificationService instance = NotificationService._();
 
   // Distinct channel IDs force Android OS to create fresh max-importance channels
-  static const _notificationChannelId = 'remindly_standard_channel_v4';
-  static const _alarmChannelId = 'remindly_loud_alarm_channel_v4';
+  static const _notificationChannelId = 'remindly_notif_v9';
+  static const _alarmChannelId = 'remindly_alarm_v9';
 
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
@@ -211,7 +211,7 @@ class NotificationService {
     if (!_supportsMobileNotifications) return;
     try {
       final baseId = baseIdFor(reminderId);
-      for (int offset = 0; offset < 20; offset++) {
+      for (int offset = 0; offset < 150; offset++) {
         await _plugin.cancel(baseId + offset);
       }
     } catch (e) {
@@ -256,6 +256,54 @@ class NotificationService {
     }
   }
 
+  /// Computes the exact next upcoming occurrence of a reminder.
+  /// Works reliably for both one-time dates and recurring weekday schedules.
+  tz.TZDateTime? getNextUpcomingOccurrence(ReminderItem reminder) {
+    final now = tz.TZDateTime.now(tz.local);
+    if (!reminder.isRecurring) {
+      if (reminder.oneTimeDate == null) return null;
+      final d = reminder.oneTimeDate!;
+      final target = tz.TZDateTime(
+        tz.local,
+        d.year,
+        d.month,
+        d.day,
+        reminder.hour,
+        reminder.minute,
+        0,
+      );
+      return target.isAfter(now) ? target : null;
+    }
+
+    if (reminder.daysOfWeek.isEmpty) return null;
+
+    tz.TZDateTime? earliest;
+    for (final weekday in reminder.daysOfWeek) {
+      var candidate = tz.TZDateTime(
+        tz.local,
+        now.year,
+        now.month,
+        now.day,
+        reminder.hour,
+        reminder.minute,
+        0,
+      );
+
+      if (candidate.weekday == weekday && candidate.isAfter(now)) {
+        // Today is matching and in the future
+      } else {
+        while (candidate.weekday != weekday || !candidate.isAfter(now)) {
+          candidate = candidate.add(const Duration(days: 1));
+        }
+      }
+
+      if (earliest == null || candidate.isBefore(earliest)) {
+        earliest = candidate;
+      }
+    }
+    return earliest;
+  }
+
   Future<void> _scheduleChannel({
     required ReminderItem reminder,
     required int baseOffset,
@@ -277,92 +325,83 @@ class NotificationService {
       'isAlarm': isAlarm,
     });
 
+    // 1. Direct one-shot EXACT alarm for the immediate next occurrence.
+    // matchDateTimeComponents: null ensures Android OS sets a direct hardware
+    // AlarmManager.setExactAndAllowWhileIdle without any 7-day calendar jumps!
+    final immediateNext = getNextUpcomingOccurrence(reminder);
+    if (immediateNext != null) {
+      try {
+        await _plugin.zonedSchedule(
+          baseOffset,
+          title,
+          body,
+          immediateNext,
+          details,
+          payload: payload,
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+        );
+      } catch (e) {
+        debugPrint(
+            '[NotificationService] Exact immediate schedule failed ($e). Falling back to inexact...');
+        try {
+          await _plugin.zonedSchedule(
+            baseOffset,
+            title,
+            body,
+            immediateNext,
+            details,
+            payload: payload,
+            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+          );
+        } catch (fallbackError) {
+          debugPrint(
+              '[NotificationService] Inexact immediate fallback failed: $fallbackError');
+        }
+      }
+    }
+
+    // 2. For recurring weekly timetable items, ALSO register weekly repeating slots
     if (reminder.isRecurring) {
       for (final weekday in reminder.daysOfWeek) {
-        final scheduled = _nextInstanceOfWeekdayTime(
+        final repeatingScheduled = _nextInstanceOfWeekdayTime(
           weekday: weekday,
           hour: reminder.hour,
           minute: reminder.minute,
         );
         try {
           await _plugin.zonedSchedule(
-            baseOffset + weekday,
+            baseOffset + 100 + weekday,
             title,
             body,
-            scheduled,
+            repeatingScheduled,
             details,
             payload: payload,
             androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
             uiLocalNotificationDateInterpretation:
-                UILocalNotificationDateInterpretation.wallClockTime,
+                UILocalNotificationDateInterpretation.absoluteTime,
             matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
           );
         } catch (e) {
           debugPrint(
-              '[NotificationService] Exact schedule failed for weekday $weekday ($e). Falling back to inexact...');
+              '[NotificationService] Exact repeating schedule failed for weekday $weekday ($e). Falling back to inexact...');
           try {
             await _plugin.zonedSchedule(
-              baseOffset + weekday,
+              baseOffset + 100 + weekday,
               title,
               body,
-              scheduled,
+              repeatingScheduled,
               details,
               payload: payload,
               androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
               uiLocalNotificationDateInterpretation:
-                  UILocalNotificationDateInterpretation.wallClockTime,
+                  UILocalNotificationDateInterpretation.absoluteTime,
               matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
             );
-          } catch (fallbackError) {
-            debugPrint(
-                '[NotificationService] Inexact fallback also failed: $fallbackError');
-          }
-        }
-      }
-    } else if (reminder.oneTimeDate != null) {
-      final date = reminder.oneTimeDate!;
-      final scheduled = tz.TZDateTime(
-        tz.local,
-        date.year,
-        date.month,
-        date.day,
-        reminder.hour,
-        reminder.minute,
-        0,
-      );
-      final now = tz.TZDateTime.now(tz.local);
-      if (scheduled.isAfter(now)) {
-        try {
-          await _plugin.zonedSchedule(
-            baseOffset,
-            title,
-            body,
-            scheduled,
-            details,
-            payload: payload,
-            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-            uiLocalNotificationDateInterpretation:
-                UILocalNotificationDateInterpretation.wallClockTime,
-          );
-        } catch (e) {
-          debugPrint(
-              '[NotificationService] Exact one-time schedule failed ($e). Falling back to inexact...');
-          try {
-            await _plugin.zonedSchedule(
-              baseOffset,
-              title,
-              body,
-              scheduled,
-              details,
-              payload: payload,
-              androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-              uiLocalNotificationDateInterpretation:
-                  UILocalNotificationDateInterpretation.wallClockTime,
-            );
-          } catch (fallbackError) {
-            debugPrint(
-                '[NotificationService] Inexact fallback failed: $fallbackError');
-          }
+          } catch (_) {}
         }
       }
     }
@@ -394,7 +433,7 @@ class NotificationService {
         payload: payload,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.wallClockTime,
+            UILocalNotificationDateInterpretation.absoluteTime,
       );
     } catch (_) {
       try {
@@ -407,7 +446,7 @@ class NotificationService {
           payload: payload,
           androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
           uiLocalNotificationDateInterpretation:
-              UILocalNotificationDateInterpretation.wallClockTime,
+              UILocalNotificationDateInterpretation.absoluteTime,
         );
       } catch (_) {}
     }
@@ -429,13 +468,11 @@ class NotificationService {
       0,
     );
 
-    if (scheduled.weekday == weekday &&
-        scheduled.isAfter(now.add(const Duration(seconds: 5)))) {
+    if (scheduled.weekday == weekday && scheduled.isAfter(now)) {
       return scheduled;
     }
 
-    while (scheduled.weekday != weekday ||
-        !scheduled.isAfter(now.add(const Duration(seconds: 5)))) {
+    while (scheduled.weekday != weekday || !scheduled.isAfter(now)) {
       scheduled = scheduled.add(const Duration(days: 1));
     }
     return scheduled;
@@ -543,7 +580,7 @@ class NotificationService {
         _standardNotificationDetails(),
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.wallClockTime,
+            UILocalNotificationDateInterpretation.absoluteTime,
       );
     } catch (e) {
       debugPrint('[NotificationService] Delayed notif exact error: $e');
@@ -556,7 +593,7 @@ class NotificationService {
           _standardNotificationDetails(),
           androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
           uiLocalNotificationDateInterpretation:
-              UILocalNotificationDateInterpretation.wallClockTime,
+              UILocalNotificationDateInterpretation.absoluteTime,
         );
       } catch (_) {}
     }
@@ -578,7 +615,7 @@ class NotificationService {
         }),
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.wallClockTime,
+            UILocalNotificationDateInterpretation.absoluteTime,
       );
     } catch (e) {
       debugPrint('[NotificationService] Delayed alarm exact error: $e');
@@ -599,7 +636,7 @@ class NotificationService {
           }),
           androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
           uiLocalNotificationDateInterpretation:
-              UILocalNotificationDateInterpretation.wallClockTime,
+              UILocalNotificationDateInterpretation.absoluteTime,
         );
       } catch (_) {}
     }

@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import '../models/app_settings.dart';
 import '../models/reminder_model.dart';
+import 'storage_service.dart';
 
 class BackendStatusResult {
   final bool reachable;
@@ -26,12 +27,26 @@ class BackendStatusResult {
 }
 
 /// Automated WhatsApp delivery service powered by the 24/7 SnapDeploy Cloud Backend.
+/// Uses device-isolated sessions to ensure 100% user privacy.
 class WhatsAppApiService {
+  static String? _cachedSessionId;
+  final _storage = StorageService();
+
   String get _baseUrl => AppConfig.backendUrl;
 
-  Map<String, String> get _headers {
+  Future<String> get _sessionId async {
+    if (_cachedSessionId != null && _cachedSessionId!.isNotEmpty) {
+      return _cachedSessionId!;
+    }
+    _cachedSessionId = await _storage.getOrCreateDeviceId();
+    return _cachedSessionId!;
+  }
+
+  Future<Map<String, String>> _headers() async {
+    final sId = await _sessionId;
     final headers = <String, String>{
       'Content-Type': 'application/json',
+      'x-session-id': sId,
     };
     if (AppConfig.apiSecret.isNotEmpty) {
       headers['x-api-key'] = AppConfig.apiSecret;
@@ -52,13 +67,15 @@ class WhatsAppApiService {
     } catch (_) {}
   }
 
-  /// Checks whether the 24/7 cloud server is reachable and if WhatsApp is linked.
+  /// Checks whether the cloud server is reachable and if WhatsApp is linked for this device.
   Future<BackendStatusResult> checkStatus({AppSettings? settings}) async {
     try {
+      final sId = await _sessionId;
+      final headers = await _headers();
       final response = await http
           .get(
-            Uri.parse('$_baseUrl/api/whatsapp/status'),
-            headers: _headers,
+            Uri.parse('$_baseUrl/api/whatsapp/status?sessionId=$sId'),
+            headers: headers,
           )
           .timeout(const Duration(seconds: 8));
 
@@ -91,7 +108,7 @@ class WhatsAppApiService {
               ? 'WhatsApp Connected'
               : status == 'waiting_qr'
                   ? 'Ready to link WhatsApp'
-                  : 'Connecting...',
+                  : 'Disconnected',
           linkedAccount: userId?.split(':').first,
           qrDataUrl: qrDataUrl,
         );
@@ -115,7 +132,7 @@ class WhatsAppApiService {
     }
   }
 
-  /// Sends an immediate WhatsApp message through the cloud backend.
+  /// Sends an immediate WhatsApp message through the cloud backend for this device session.
   Future<({bool ok, String message})> sendInstantWhatsApp({
     required AppSettings settings,
     required String phoneNumber,
@@ -135,14 +152,17 @@ class WhatsAppApiService {
     }
 
     try {
+      final sId = await _sessionId;
+      final headers = await _headers();
       final response = await http
           .post(
             Uri.parse('$_baseUrl/api/whatsapp/send-now'),
-            headers: _headers,
+            headers: headers,
             body: jsonEncode({
               'phoneNumber': cleanPhone,
               'message': message.trim(),
               'title': title ?? 'Instant Alert from Remindly',
+              'sessionId': sId,
             }),
           )
           .timeout(const Duration(seconds: 15));
@@ -164,7 +184,7 @@ class WhatsAppApiService {
     }
   }
 
-  /// Syncs a scheduled reminder with the 24/7 cloud backend scheduler.
+  /// Syncs a scheduled reminder with the 24/7 cloud backend scheduler for this device session.
   Future<bool> syncReminder(ReminderItem reminder, AppSettings settings) async {
     if (!reminder.whatsappEnabled) {
       return deleteReminder(reminder.id);
@@ -174,15 +194,18 @@ class WhatsAppApiService {
     if (phone.isEmpty) return false;
 
     try {
+      final sId = await _sessionId;
+      final headers = await _headers();
       final payload = reminder.toBackendPayload(
         defaultPhoneNumber: settings.defaultWhatsAppNumber,
         timezone: settings.timezone,
       );
+      payload['sessionId'] = sId;
 
       final response = await http
           .post(
             Uri.parse('$_baseUrl/api/schedules'),
-            headers: _headers,
+            headers: headers,
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 8));
@@ -196,10 +219,11 @@ class WhatsAppApiService {
   /// Deletes a schedule from the 24/7 cloud backend.
   Future<bool> deleteReminder(String reminderId) async {
     try {
+      final headers = await _headers();
       final response = await http
           .delete(
             Uri.parse('$_baseUrl/api/schedules/$reminderId'),
-            headers: _headers,
+            headers: headers,
           )
           .timeout(const Duration(seconds: 6));
       return response.statusCode >= 200 && response.statusCode < 300;
@@ -208,13 +232,16 @@ class WhatsAppApiService {
     }
   }
 
-  /// Logs out the connected WhatsApp session on the cloud server.
+  /// Logs out the connected WhatsApp session on the cloud server for this device.
   Future<bool> logoutWhatsApp() async {
     try {
+      final sId = await _sessionId;
+      final headers = await _headers();
       final response = await http
           .post(
             Uri.parse('$_baseUrl/api/whatsapp/logout'),
-            headers: _headers,
+            headers: headers,
+            body: jsonEncode({'sessionId': sId}),
           )
           .timeout(const Duration(seconds: 8));
       return response.statusCode >= 200 && response.statusCode < 300;
@@ -223,17 +250,22 @@ class WhatsAppApiService {
     }
   }
 
-  /// Requests an 8-digit pairing code to link WhatsApp from mobile.
+  /// Requests an 8-digit pairing code to link WhatsApp from mobile for this device.
   Future<({bool ok, String? code, String? message})> requestPairingCode(
     String phoneNumber,
   ) async {
     try {
+      final sId = await _sessionId;
+      final headers = await _headers();
       final cleanPhone = phoneNumber.replaceAll(RegExp(r'\D'), '');
       final response = await http
           .post(
             Uri.parse('$_baseUrl/api/whatsapp/pair-code'),
-            headers: _headers,
-            body: jsonEncode({'phoneNumber': cleanPhone}),
+            headers: headers,
+            body: jsonEncode({
+              'phoneNumber': cleanPhone,
+              'sessionId': sId,
+            }),
           )
           .timeout(const Duration(seconds: 15));
 

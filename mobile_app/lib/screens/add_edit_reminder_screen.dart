@@ -65,7 +65,8 @@ class _AddEditReminderScreenState extends State<AddEditReminderScreen> {
     _alarmEnabled = e?.alarmEnabled ?? widget.settings.defaultAlarm;
     _notificationEnabled =
         e?.notificationEnabled ?? widget.settings.defaultNotification;
-    _whatsappEnabled = e?.whatsappEnabled ?? widget.settings.defaultWhatsApp;
+    _whatsappEnabled = e?.whatsappEnabled ??
+        (widget.settings.hasDefaultNumber ? widget.settings.defaultWhatsApp : false);
     _useDefaultWhatsAppNumber = e?.useDefaultWhatsAppNumber ??
         widget.settings.defaultWhatsAppNumber.trim().isNotEmpty;
   }
@@ -133,26 +134,61 @@ class _AddEditReminderScreenState extends State<AddEditReminderScreen> {
       return;
     }
 
+    final sortedDays =
+        _isRecurring ? (_selectedDays.toList()..sort()) : <int>[];
+
     if (_whatsappEnabled) {
       final phone = _useDefaultWhatsAppNumber
           ? widget.settings.defaultWhatsAppNumber.trim()
           : _customPhoneController.text.trim();
       if (phone.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Please enter a contact WhatsApp number or set default in Settings.',
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('WhatsApp Recipient Needed'),
+            content: const Text(
+              'WhatsApp Alert is toggled ON, but no recipient phone number was entered.\n\nWould you like to save as Alarm & Notification only, or enter a WhatsApp number?',
             ),
-            backgroundColor: AppPalette.roseAccent,
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  _completeSave(
+                    effectiveTitle: effectiveTitle,
+                    sortedDays: sortedDays,
+                    saveWhatsApp: false,
+                  );
+                },
+                child: const Text('Save without WhatsApp'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  setState(() {
+                    _useDefaultWhatsAppNumber = false;
+                  });
+                },
+                child: const Text('Enter Number'),
+              ),
+            ],
           ),
         );
         return;
       }
     }
 
-    final sortedDays =
-        _isRecurring ? (_selectedDays.toList()..sort()) : <int>[];
+    _completeSave(
+      effectiveTitle: effectiveTitle,
+      sortedDays: sortedDays,
+      saveWhatsApp: _whatsappEnabled,
+    );
+  }
 
+  void _completeSave({
+    required String effectiveTitle,
+    required List<int> sortedDays,
+    required bool saveWhatsApp,
+  }) {
     final reminder = ReminderItem(
       id: widget.existing?.id ?? const Uuid().v4(),
       title: effectiveTitle,
@@ -164,7 +200,7 @@ class _AddEditReminderScreenState extends State<AddEditReminderScreen> {
       daysOfWeek: sortedDays,
       alarmEnabled: _alarmEnabled,
       notificationEnabled: _notificationEnabled,
-      whatsappEnabled: _whatsappEnabled,
+      whatsappEnabled: saveWhatsApp,
       useDefaultWhatsAppNumber: _useDefaultWhatsAppNumber,
       customWhatsAppNumber: _customPhoneController.text.trim(),
       customWhatsAppMessage: _customMessageController.text.trim(),

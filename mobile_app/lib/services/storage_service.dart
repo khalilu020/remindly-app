@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 import '../config/app_config.dart';
 import '../models/app_settings.dart';
 import '../models/reminder_model.dart';
@@ -7,6 +8,17 @@ import '../models/reminder_model.dart';
 class StorageService {
   static const _remindersKey = 'saved_reminders_v1';
   static const _settingsKey = 'app_settings_v1';
+  static const _deviceIdKey = 'device_unique_session_id_v2';
+
+  Future<String> getOrCreateDeviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    var id = prefs.getString(_deviceIdKey);
+    if (id == null || id.isEmpty) {
+      id = const Uuid().v4();
+      await prefs.setString(_deviceIdKey, id);
+    }
+    return id;
+  }
 
   Future<List<ReminderItem>> loadReminders() async {
     final prefs = await SharedPreferences.getInstance();

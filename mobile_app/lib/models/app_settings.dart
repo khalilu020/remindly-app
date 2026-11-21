@@ -21,9 +21,9 @@ class AppSettings {
     this.backendUrl = 'https://remindly-bot-cc713.containers.snapdeploy.app',
     this.apiSecret = '',
     this.timezone = 'Asia/Karachi',
-    this.defaultAlarm = false,
+    this.defaultAlarm = true,
     this.defaultNotification = true,
-    this.defaultWhatsApp = true,
+    this.defaultWhatsApp = false,
   });
 
   bool get hasDefaultNumber => defaultWhatsAppNumber.trim().isNotEmpty;
