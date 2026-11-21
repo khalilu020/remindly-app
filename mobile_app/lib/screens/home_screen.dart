@@ -37,14 +37,17 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loading = true;
   int _currentTab = 0;
   int _selectedTimetableDay = DateTime.now().weekday;
+  bool _hasExactAlarmPermission = true;
+  bool _hasNotificationPermission = true;
 
   @override
   void initState() {
     super.initState();
     NotificationService.instance.onAlarmNotificationTapped = _openAlarmScreen;
     _loadInitialData();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      NotificationService.instance.requestPermissions();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await NotificationService.instance.requestPermissions();
+      await _checkSystemPermissions();
     });
   }
 
@@ -61,6 +64,18 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _checkSystemPermissions() async {
+    final notif = await NotificationService.instance.areNotificationsEnabled();
+    final exact =
+        await NotificationService.instance.canScheduleExactNotifications();
+    if (mounted) {
+      setState(() {
+        _hasNotificationPermission = notif;
+        _hasExactAlarmPermission = exact;
+      });
+    }
+  }
+
   Future<void> _loadInitialData() async {
     final settings = await _storage.loadSettings(
       fallbackTimezone: NotificationService.instance.deviceTimezone,
@@ -74,6 +89,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _loading = false;
     });
 
+    await _checkSystemPermissions();
     await _refreshBackendStatus();
   }
 
@@ -556,12 +572,89 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildPermissionWarningBanner() {
+    if (_hasExactAlarmPermission && _hasNotificationPermission) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF451A03),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF59E0B)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded,
+              color: Color(0xFFF59E0B), size: 28),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Alarms & Notifications Disabled',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13.5,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  !_hasExactAlarmPermission
+                      ? 'Android requires "Alarms & Reminders" permission to ring alarms on time.'
+                      : 'Notification permission is required to display alerts.',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.85),
+                    fontSize: 11.5,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          FilledButton(
+            onPressed: () async {
+              if (!_hasNotificationPermission) {
+                await NotificationService.instance
+                    .requestNotificationsPermission();
+              }
+              if (!_hasExactAlarmPermission) {
+                await NotificationService.instance
+                    .requestExactAlarmsPermission();
+              }
+              await Future.delayed(const Duration(seconds: 1));
+              await _checkSystemPermissions();
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFF59E0B),
+              foregroundColor: const Color(0xFF451A03),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              minimumSize: const Size(0, 36),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'Enable',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSchedulesTab() {
     if (_reminders.isEmpty) {
       return ListView(
         padding: const EdgeInsets.only(bottom: 110),
         children: [
           _buildHeroHeader(),
+          _buildPermissionWarningBanner(),
           _buildWhatsAppOnboardingBanner(),
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
@@ -641,6 +734,7 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.only(bottom: 110),
       children: [
         _buildHeroHeader(),
+        _buildPermissionWarningBanner(),
         _buildWhatsAppOnboardingBanner(),
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 2, 18, 10),

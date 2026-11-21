@@ -34,19 +34,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _defaultNotification;
   late bool _defaultWhatsApp;
   bool _sendingTest = false;
-  bool _testingAlerts = false;
+  bool _testingNotif = false;
+  bool _testingAlarm = false;
+  bool _testingDelayed = false;
+  bool _notifGranted = true;
+  bool _exactGranted = true;
 
   final _api = WhatsAppApiService();
 
-  Future<void> _testAlarmAndNotification() async {
-    setState(() => _testingAlerts = true);
-    await NotificationService.instance.testAlarmAndNotification();
+  Future<void> _checkPermissions() async {
+    final notif = await NotificationService.instance.areNotificationsEnabled();
+    final exact =
+        await NotificationService.instance.canScheduleExactNotifications();
+    if (mounted) {
+      setState(() {
+        _notifGranted = notif;
+        _exactGranted = exact;
+      });
+    }
+  }
+
+  Future<void> _testInstantNotification() async {
+    setState(() => _testingNotif = true);
+    await NotificationService.instance.showInstantNotification();
     if (!mounted) return;
-    setState(() => _testingAlerts = false);
+    setState(() => _testingNotif = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('🔔 Notification sent! Check your notification tray.'),
+        backgroundColor: AppPalette.notifIndigo,
+      ),
+    );
+  }
+
+  Future<void> _testInstantAlarm() async {
+    setState(() => _testingAlarm = true);
+    await NotificationService.instance.showInstantAlarm();
+    if (!mounted) return;
+    setState(() => _testingAlarm = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content:
+            Text('⏰ Loud Alarm alert triggered! Tap it to open Alarm screen.'),
+        backgroundColor: AppPalette.alarmCoral,
+      ),
+    );
+  }
+
+  Future<void> _testDelayedAlarm() async {
+    setState(() => _testingDelayed = true);
+    await NotificationService.instance
+        .testDelayedAlarmAndNotification(seconds: 5);
+    if (!mounted) return;
+    setState(() => _testingDelayed = false);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text(
-          '⏰ Test Alarm & Notification scheduled for 5 seconds from now! Lock screen or wait.',
+          '⏱️ Test alarm set for 5s from now! Lock your screen now to verify waking.',
         ),
         backgroundColor: AppPalette.alarmCoral,
         duration: Duration(seconds: 4),
@@ -55,15 +99,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _requestExactAlarmPermissions() async {
-    await NotificationService.instance.requestPermissions();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Ensured notification & alarm permissions are granted in system settings.',
-        ),
-      ),
-    );
+    await NotificationService.instance.requestExactAlarmsPermission();
+    await Future.delayed(const Duration(seconds: 1));
+    await _checkPermissions();
+  }
+
+  Future<void> _requestNotificationPermission() async {
+    await NotificationService.instance.requestNotificationsPermission();
+    await Future.delayed(const Duration(seconds: 1));
+    await _checkPermissions();
   }
 
   @override
@@ -74,6 +118,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _defaultAlarm = widget.settings.defaultAlarm;
     _defaultNotification = widget.settings.defaultNotification;
     _defaultWhatsApp = widget.settings.defaultWhatsApp;
+    _checkPermissions();
   }
 
   @override
@@ -365,7 +410,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: 'Offline Alarm & Notification System',
           children: [
             Text(
-              'Remindly uses Android AlarmManager to ring offline even when your phone is locked or Doze mode is active. Tap below to verify permissions and test instant ringing on your device.',
+              'Remindly uses native Android AlarmManager to ring offline even when your phone is locked or Doze mode is active.',
               style: TextStyle(
                 fontSize: 12,
                 color: cs.onSurfaceVariant,
@@ -373,53 +418,207 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
             const SizedBox(height: 14),
+
+            // Live Permission Status Badges
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color:
+                    isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        _notifGranted
+                            ? Icons.check_circle_rounded
+                            : Icons.error_rounded,
+                        color: _notifGranted
+                            ? AppPalette.whatsappGreen
+                            : AppPalette.roseAccent,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Push Notification Permission',
+                              style: TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w700),
+                            ),
+                            Text(
+                              _notifGranted
+                                  ? 'Granted'
+                                  : 'Blocked — banner alerts will not show',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: _notifGranted
+                                    ? cs.onSurfaceVariant
+                                    : AppPalette.roseAccent,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (!_notifGranted)
+                        TextButton(
+                          onPressed: _requestNotificationPermission,
+                          child: const Text('Allow'),
+                        ),
+                    ],
+                  ),
+                  const Divider(height: 16),
+                  Row(
+                    children: [
+                      Icon(
+                        _exactGranted
+                            ? Icons.check_circle_rounded
+                            : Icons.warning_rounded,
+                        color: _exactGranted
+                            ? AppPalette.whatsappGreen
+                            : AppPalette.amberAccent,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Exact Alarms & Reminders',
+                              style: TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w700),
+                            ),
+                            Text(
+                              _exactGranted
+                                  ? 'Active — exact-minute alarms allowed'
+                                  : 'Tap to Allow in Android Settings',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: _exactGranted
+                                    ? cs.onSurfaceVariant
+                                    : AppPalette.amberAccent,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (!_exactGranted)
+                        FilledButton.tonal(
+                          onPressed: _requestExactAlarmPermissions,
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 4),
+                            minimumSize: const Size(0, 32),
+                          ),
+                          child: const Text('Enable',
+                              style: TextStyle(fontSize: 11.5)),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+            const Text(
+              'Test Device Sound & Notifications:',
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 10),
+
+            // 3 Interactive Test Buttons
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: _requestExactAlarmPermissions,
+                    onPressed: _testingNotif ? null : _testInstantNotification,
                     style: OutlinedButton.styleFrom(
+                      foregroundColor: AppPalette.notifIndigo,
+                      side: BorderSide(
+                          color: AppPalette.notifIndigo.withOpacity(0.5)),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      padding: const EdgeInsets.symmetric(vertical: 11),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
                     ),
-                    icon: const Icon(Icons.security_rounded, size: 16),
+                    icon: _testingNotif
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.notifications_active_rounded,
+                            size: 16),
                     label: const Text(
-                      'Alarm Permission',
-                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                      'Banner (0s)',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 11.5),
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _testingAlerts ? null : _testAlarmAndNotification,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppPalette.alarmCoral,
-                      foregroundColor: Colors.white,
+                  child: OutlinedButton.icon(
+                    onPressed: _testingAlarm ? null : _testInstantAlarm,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppPalette.alarmCoral,
+                      side: BorderSide(
+                          color: AppPalette.alarmCoral.withOpacity(0.5)),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      padding: const EdgeInsets.symmetric(vertical: 11),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
                     ),
-                    icon: _testingAlerts
+                    icon: _testingAlarm
                         ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.alarm_on_rounded, size: 16),
                     label: const Text(
-                      'Test Alarm (5s)',
-                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+                      'Alarm (0s)',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 11.5),
                     ),
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _testingDelayed ? null : _testDelayedAlarm,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppPalette.alarmCoral,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                ),
+                icon: _testingDelayed
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.timer_rounded, size: 16),
+                label: const Text(
+                  'Test 5s Delayed Alarm (Lock Phone to Test)',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+                ),
+              ),
             ),
           ],
         ),
