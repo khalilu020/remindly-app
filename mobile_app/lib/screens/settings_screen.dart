@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/app_settings.dart';
+import '../services/notification_service.dart';
 import '../services/whatsapp_api_service.dart';
 import '../theme/app_theme.dart';
 
@@ -33,8 +34,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _defaultNotification;
   late bool _defaultWhatsApp;
   bool _sendingTest = false;
+  bool _testingAlerts = false;
 
   final _api = WhatsAppApiService();
+
+  Future<void> _testAlarmAndNotification() async {
+    setState(() => _testingAlerts = true);
+    await NotificationService.instance.testAlarmAndNotification();
+    if (!mounted) return;
+    setState(() => _testingAlerts = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          '⏰ Test Alarm & Notification scheduled for 5 seconds from now! Lock screen or wait.',
+        ),
+        backgroundColor: AppPalette.alarmCoral,
+        duration: Duration(seconds: 4),
+      ),
+    );
+  }
+
+  Future<void> _requestExactAlarmPermissions() async {
+    await NotificationService.instance.requestPermissions();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Ensured notification & alarm permissions are granted in system settings.',
+        ),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -248,7 +278,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               keyboardType: TextInputType.phone,
               decoration: const InputDecoration(
                 labelText: 'Default Recipient Phone Number',
-                hintText: 'e.g. 923195853020 (country code + number)',
+                hintText: 'e.g. 923001234567 (country code + number)',
                 prefixIcon: Icon(Icons.phone_iphone_rounded),
               ),
             ),
@@ -324,6 +354,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: 'Dispatches automatically at the exact scheduled minute',
               value: _defaultWhatsApp,
               onChanged: (v) => setState(() => _defaultWhatsApp = v),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 14),
+
+        // Device Permissions & Offline Alert Verification
+        _SettingsGroupCard(
+          title: 'Offline Alarm & Notification System',
+          children: [
+            Text(
+              'Remindly uses Android AlarmManager to ring offline even when your phone is locked or Doze mode is active. Tap below to verify permissions and test instant ringing on your device.',
+              style: TextStyle(
+                fontSize: 12,
+                color: cs.onSurfaceVariant,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _requestExactAlarmPermissions,
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 11),
+                    ),
+                    icon: const Icon(Icons.security_rounded, size: 16),
+                    label: const Text(
+                      'Alarm Permission',
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _testingAlerts ? null : _testAlarmAndNotification,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppPalette.alarmCoral,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 11),
+                    ),
+                    icon: _testingAlerts
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.alarm_on_rounded, size: 16),
+                    label: const Text(
+                      'Test Alarm (5s)',
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),

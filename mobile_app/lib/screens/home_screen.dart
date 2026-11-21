@@ -479,12 +479,90 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildWhatsAppOnboardingBanner() {
+    final connected = _backendStatus?.whatsappConnected ?? false;
+    if (connected) return const SizedBox.shrink();
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cs = Theme.of(context).colorScheme;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF132A1C) : const Color(0xFFDCFCE7),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppPalette.whatsappGreen.withOpacity(0.5),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppPalette.whatsappGreen.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.phonelink_setup_rounded,
+              color: AppPalette.whatsappGreen,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Connect Your WhatsApp',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13.5,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Link once to receive automated reminders at your exact schedule times.',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: cs.onSurfaceVariant,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          FilledButton(
+            onPressed: _openConnectWhatsApp,
+            style: FilledButton.styleFrom(
+              backgroundColor: AppPalette.whatsappGreen,
+              foregroundColor: const Color(0xFF042611),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              minimumSize: const Size(0, 36),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'Link Now',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSchedulesTab() {
     if (_reminders.isEmpty) {
       return ListView(
         padding: const EdgeInsets.only(bottom: 110),
         children: [
           _buildHeroHeader(),
+          _buildWhatsAppOnboardingBanner(),
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
             child: Column(
@@ -563,6 +641,7 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.only(bottom: 110),
       children: [
         _buildHeroHeader(),
+        _buildWhatsAppOnboardingBanner(),
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 2, 18, 10),
           child: Row(

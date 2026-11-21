@@ -167,7 +167,7 @@ class _ConnectWhatsAppScreenState extends State<ConnectWhatsAppScreen> {
                     Text(
                       _status?.linkedAccount != null
                           ? 'Linked to: +${_status!.linkedAccount}'
-                          : 'Linked to: +923195853020',
+                          : 'WhatsApp Connected & Active',
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
@@ -513,6 +513,20 @@ class _ConnectWhatsAppScreenState extends State<ConnectWhatsAppScreen> {
                               color: cs.onSurfaceVariant,
                             ),
                           ),
+                          const SizedBox(height: 10),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              _pollStatus();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Checking WhatsApp connection...'),
+                                  duration: Duration(seconds: 1),
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.refresh_rounded, size: 16),
+                            label: const Text('Refresh QR / Check Status'),
+                          ),
                         ] else ...[
                           const SizedBox(height: 28),
                           const CircularProgressIndicator(
@@ -523,10 +537,29 @@ class _ConnectWhatsAppScreenState extends State<ConnectWhatsAppScreen> {
                             'Preparing live QR code...',
                             style: TextStyle(color: cs.onSurfaceVariant),
                           ),
-                          const SizedBox(height: 28),
+                          const SizedBox(height: 12),
+                          TextButton.icon(
+                            onPressed: () {
+                              _api.wakeServer();
+                              _pollStatus();
+                            },
+                            icon: const Icon(Icons.refresh_rounded, size: 16),
+                            label: const Text('Tap to Reload QR'),
+                          ),
+                          const SizedBox(height: 20),
                         ],
                       ],
                     ),
+                  ),
+                  const SizedBox(height: 20),
+                  _StepsCard(
+                    title: 'How to scan QR (takes 10 seconds)',
+                    steps: const [
+                      'Open WhatsApp on your phone.',
+                      'Tap the 3 dots (Android top-right) or Settings (iPhone bottom-right).',
+                      'Tap "Linked Devices" → then tap "Link a Device".',
+                      'Point your phone camera at the QR code above — it connects immediately!',
+                    ],
                   ),
                 ],
               ],

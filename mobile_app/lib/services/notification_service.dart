@@ -8,6 +8,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
+import '../config/app_config.dart';
 import '../models/reminder_model.dart';
 import 'storage_service.dart';
 import 'whatsapp_api_service.dart';
@@ -49,22 +50,25 @@ class NotificationService {
         _deviceTimezone = detected;
         try {
           localLocation = tz.getLocation(detected);
-        } catch (_) {}
+        } catch (_) {
+          final fallback = AppConfig.detectFallbackTimezone(detected);
+          try {
+            localLocation = tz.getLocation(fallback);
+            _deviceTimezone = fallback;
+          } catch (_) {}
+        }
       } catch (_) {}
     }
 
     // Fallback: match by actual device timezone offset
     if (localLocation == null) {
+      final detectedByOffset = AppConfig.detectFallbackTimezone('');
       try {
-        final offsetMs = DateTime.now().timeZoneOffset.inMilliseconds;
-        for (final loc in tz.timeZoneDatabase.locations.values) {
-          if (loc.currentTimeZone.offset == offsetMs) {
-            localLocation = loc;
-            _deviceTimezone = loc.name;
-            break;
-          }
-        }
-      } catch (_) {}
+        localLocation = tz.getLocation(detectedByOffset);
+        _deviceTimezone = detectedByOffset;
+      } catch (_) {
+        localLocation = tz.local;
+      }
     }
 
     localLocation ??= tz.getLocation('UTC');
@@ -123,9 +127,10 @@ class NotificationService {
       _notificationChannelId,
       'Activity Notifications',
       description: 'Standard reminder notifications for scheduled activities',
-      importance: Importance.high,
+      importance: Importance.max,
       playSound: true,
       enableVibration: true,
+      enableLights: true,
     );
 
     try {
@@ -140,8 +145,13 @@ class NotificationService {
     try {
       final androidImpl = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
-      await androidImpl?.requestNotificationsPermission();
-      await androidImpl?.requestExactAlarmsPermission();
+      if (androidImpl != null) {
+        await androidImpl.requestNotificationsPermission();
+        final canExact = await androidImpl.canScheduleExactNotifications();
+        if (canExact == false) {
+          await androidImpl.requestExactAlarmsPermission();
+        }
+      }
     } catch (_) {}
   }
 
@@ -247,7 +257,8 @@ class NotificationService {
         }
       } else if (reminder.oneTimeDate != null) {
         final date = reminder.oneTimeDate!;
-        final target = DateTime(
+        final scheduled = tz.TZDateTime(
+          tz.local,
           date.year,
           date.month,
           date.day,
@@ -255,10 +266,14 @@ class NotificationService {
           reminder.minute,
           0,
         );
-        if (target.isAfter(DateTime.now())) {
+        final now = tz.TZDateTime.now(tz.local);
+        if (scheduled.isAfter(now)) {
+          final exactDateTime = DateTime.fromMillisecondsSinceEpoch(
+            scheduled.millisecondsSinceEpoch,
+          );
           try {
             await AndroidAlarmManager.oneShotAt(
-              target,
+              exactDateTime,
               baseOffset,
               whatsappBackgroundDispatcher,
               exact: true,
@@ -268,7 +283,7 @@ class NotificationService {
           } catch (_) {
             try {
               await AndroidAlarmManager.oneShotAt(
-                target,
+                exactDateTime,
                 baseOffset,
                 whatsappBackgroundDispatcher,
                 exact: false,
@@ -332,7 +347,7 @@ class NotificationService {
               scheduled,
               details,
               payload: payload,
-              androidScheduleMode: AndroidScheduleMode.inexact,
+              androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
               uiLocalNotificationDateInterpretation:
                   UILocalNotificationDateInterpretation.absoluteTime,
               matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
@@ -342,7 +357,8 @@ class NotificationService {
       }
     } else if (reminder.oneTimeDate != null) {
       final date = reminder.oneTimeDate!;
-      final target = DateTime(
+      final scheduled = tz.TZDateTime(
+        tz.local,
         date.year,
         date.month,
         date.day,
@@ -350,8 +366,8 @@ class NotificationService {
         reminder.minute,
         0,
       );
-      if (target.isAfter(DateTime.now())) {
-        final scheduled = tz.TZDateTime.from(target, tz.local);
+      final now = tz.TZDateTime.now(tz.local);
+      if (scheduled.isAfter(now)) {
         try {
           await _plugin.zonedSchedule(
             baseOffset,
@@ -373,7 +389,7 @@ class NotificationService {
               scheduled,
               details,
               payload: payload,
-              androidScheduleMode: AndroidScheduleMode.inexact,
+              androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
               uiLocalNotificationDateInterpretation:
                   UILocalNotificationDateInterpretation.absoluteTime,
             );
@@ -399,17 +415,33 @@ class NotificationService {
       'isAlarm': true,
     });
 
-    await _plugin.zonedSchedule(
-      999900 + (DateTime.now().millisecondsSinceEpoch % 99),
-      '⏰ SNOOZED ALARM: $title',
-      note.isNotEmpty ? note : 'Snooze ended — time for your activity!',
-      snoozeTime,
-      _alarmDetails(),
-      payload: payload,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-    );
+    try {
+      await _plugin.zonedSchedule(
+        999900 + (DateTime.now().millisecondsSinceEpoch % 99),
+        '⏰ SNOOZED ALARM: $title',
+        note.isNotEmpty ? note : 'Snooze ended — time for your activity!',
+        snoozeTime,
+        _alarmDetails(),
+        payload: payload,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    } catch (_) {
+      try {
+        await _plugin.zonedSchedule(
+          999900 + (DateTime.now().millisecondsSinceEpoch % 99),
+          '⏰ SNOOZED ALARM: $title',
+          note.isNotEmpty ? note : 'Snooze ended — time for your activity!',
+          snoozeTime,
+          _alarmDetails(),
+          payload: payload,
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+        );
+      } catch (_) {}
+    }
   }
 
   tz.TZDateTime _nextInstanceOfWeekdayTime({
@@ -417,17 +449,27 @@ class NotificationService {
     required int hour,
     required int minute,
   }) {
-    final now = DateTime.now();
-    var scheduled = DateTime(now.year, now.month, now.day, hour, minute, 0);
+    final now = tz.TZDateTime.now(tz.local);
+    var scheduled = tz.TZDateTime(
+      tz.local,
+      now.year,
+      now.month,
+      now.day,
+      hour,
+      minute,
+      0,
+    );
 
-    if (scheduled.weekday == weekday && scheduled.isAfter(now)) {
-      return tz.TZDateTime.from(scheduled, tz.local);
+    if (scheduled.weekday == weekday &&
+        scheduled.isAfter(now.add(const Duration(seconds: 3)))) {
+      return scheduled;
     }
 
-    while (scheduled.weekday != weekday || !scheduled.isAfter(now)) {
+    while (scheduled.weekday != weekday ||
+        !scheduled.isAfter(now.add(const Duration(seconds: 3)))) {
       scheduled = scheduled.add(const Duration(days: 1));
     }
-    return tz.TZDateTime.from(scheduled, tz.local);
+    return scheduled;
   }
 
   NotificationDetails _standardNotificationDetails() {
@@ -436,9 +478,10 @@ class NotificationService {
       'Activity Notifications',
       channelDescription:
           'Standard reminder notifications for scheduled activities',
-      importance: Importance.high,
-      priority: Priority.high,
+      importance: Importance.max,
+      priority: Priority.max,
       playSound: true,
+      enableVibration: true,
     );
     const iosDetails = DarwinNotificationDetails(
       presentAlert: true,
@@ -456,13 +499,11 @@ class NotificationService {
           'High-priority loud alarm alerts for scheduled activities',
       importance: Importance.max,
       priority: Priority.max,
-      fullScreenIntent: true,
       category: AndroidNotificationCategory.alarm,
       audioAttributesUsage: AudioAttributesUsage.alarm,
       playSound: true,
       enableVibration: true,
-      vibrationPattern: Int64List.fromList([0, 800, 400, 800, 400, 800]),
-      additionalFlags: Int32List.fromList([4]),
+      vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
     );
     const iosDetails = DarwinNotificationDetails(
       presentAlert: true,
@@ -471,6 +512,83 @@ class NotificationService {
       interruptionLevel: InterruptionLevel.timeSensitive,
     );
     return NotificationDetails(android: androidDetails, iOS: iosDetails);
+  }
+
+  /// Instantly schedules a test Notification and Alarm 5 seconds from now.
+  /// Allows users to immediately verify sound, banner, and lock-screen alerts.
+  Future<void> testAlarmAndNotification() async {
+    if (!_supportsMobileNotifications) return;
+    final now = tz.TZDateTime.now(tz.local);
+    final scheduledNotif = now.add(const Duration(seconds: 5));
+    final scheduledAlarm = now.add(const Duration(seconds: 7));
+
+    try {
+      await _plugin.zonedSchedule(
+        888801,
+        '🔔 Remindly Notification Test',
+        'Push notification banner is working properly!',
+        scheduledNotif,
+        _standardNotificationDetails(),
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    } catch (_) {
+      try {
+        await _plugin.zonedSchedule(
+          888801,
+          '🔔 Remindly Notification Test',
+          'Push notification banner is working properly!',
+          scheduledNotif,
+          _standardNotificationDetails(),
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+        );
+      } catch (_) {}
+    }
+
+    try {
+      await _plugin.zonedSchedule(
+        888802,
+        '⏰ Remindly Loud Alarm Test',
+        'Offline Alarm is ringing! Tap to dismiss or snooze.',
+        scheduledAlarm,
+        _alarmDetails(),
+        payload: jsonEncode({
+          'id': 'test_alarm_id',
+          'title': 'Remindly Loud Alarm Test',
+          'note': 'Offline Alarm is ringing! Tap to dismiss or snooze.',
+          'time': 'Test Alert',
+          'category': 'Test',
+          'isAlarm': true,
+        }),
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    } catch (_) {
+      try {
+        await _plugin.zonedSchedule(
+          888802,
+          '⏰ Remindly Loud Alarm Test',
+          'Offline Alarm is ringing! Tap to dismiss or snooze.',
+          scheduledAlarm,
+          _alarmDetails(),
+          payload: jsonEncode({
+            'id': 'test_alarm_id',
+            'title': 'Remindly Loud Alarm Test',
+            'note': 'Offline Alarm is ringing! Tap to dismiss or snooze.',
+            'time': 'Test Alert',
+            'category': 'Test',
+            'isAlarm': true,
+          }),
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+        );
+      } catch (_) {}
+    }
   }
 }
 

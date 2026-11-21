@@ -1,5 +1,5 @@
 class AppSettings {
-  /// Default recipient WhatsApp number (with country code, e.g. "923195853020")
+  /// Default recipient WhatsApp number (with country code, e.g. "923001234567")
   final String defaultWhatsAppNumber;
 
   /// Base URL of the Node.js Baileys cloud backend
@@ -17,7 +17,7 @@ class AppSettings {
   final bool defaultWhatsApp;
 
   const AppSettings({
-    this.defaultWhatsAppNumber = '923195853020',
+    this.defaultWhatsAppNumber = '',
     this.backendUrl = 'https://remindly-bot-cc713.containers.snapdeploy.app',
     this.apiSecret = '',
     this.timezone = 'Asia/Karachi',
@@ -64,7 +64,7 @@ class AppSettings {
   factory AppSettings.fromJson(Map<String, dynamic> json) {
     return AppSettings(
       defaultWhatsAppNumber:
-          json['defaultWhatsAppNumber'] as String? ?? '923195853020',
+          json['defaultWhatsAppNumber'] as String? ?? '',
       backendUrl: json['backendUrl'] as String? ??
           'https://remindly-bot-cc713.containers.snapdeploy.app',
       apiSecret: json['apiSecret'] as String? ?? '',
