@@ -103,7 +103,13 @@ class _AddEditReminderScreenState extends State<AddEditReminderScreen> {
   }
 
   void _save() {
-    if (!_formKey.currentState!.validate()) return;
+    final enteredTitle = _titleController.text.trim();
+    final h12 = _selectedTime.hour % 12 == 0 ? 12 : _selectedTime.hour % 12;
+    final period = _selectedTime.hour >= 12 ? 'PM' : 'AM';
+    final timeStr =
+        '${h12.toString().padLeft(2, '0')}:${_selectedTime.minute.toString().padLeft(2, '0')} $period';
+    final effectiveTitle =
+        enteredTitle.isNotEmpty ? enteredTitle : 'Reminder at $timeStr';
 
     if (!_alarmEnabled && !_notificationEnabled && !_whatsappEnabled) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -111,6 +117,7 @@ class _AddEditReminderScreenState extends State<AddEditReminderScreen> {
           content: Text(
             'Select at least one alert option (Alarm, Notification, or WhatsApp).',
           ),
+          backgroundColor: AppPalette.roseAccent,
         ),
       );
       return;
@@ -120,6 +127,7 @@ class _AddEditReminderScreenState extends State<AddEditReminderScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Pick at least one weekday for your timetable.'),
+          backgroundColor: AppPalette.roseAccent,
         ),
       );
       return;
@@ -133,8 +141,9 @@ class _AddEditReminderScreenState extends State<AddEditReminderScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Add a WhatsApp number in Settings or enter a specific contact.',
+              'Please enter a contact WhatsApp number or set default in Settings.',
             ),
+            backgroundColor: AppPalette.roseAccent,
           ),
         );
         return;
@@ -146,7 +155,7 @@ class _AddEditReminderScreenState extends State<AddEditReminderScreen> {
 
     final reminder = ReminderItem(
       id: widget.existing?.id ?? const Uuid().v4(),
-      title: _titleController.text.trim(),
+      title: effectiveTitle,
       note: _noteController.text.trim(),
       category: _category,
       hour: _selectedTime.hour,
@@ -320,14 +329,11 @@ class _AddEditReminderScreenState extends State<AddEditReminderScreen> {
             TextFormField(
               controller: _titleController,
               decoration: const InputDecoration(
-                labelText: 'Activity Title',
+                labelText: 'Activity Title (optional)',
                 hintText: 'e.g. Morning Gym, CS Lecture, Medicine',
                 prefixIcon: Icon(Icons.edit_note_rounded),
               ),
               textCapitalization: TextCapitalization.sentences,
-              validator: (v) => (v == null || v.trim().isEmpty)
-                  ? 'Please enter an activity title'
-                  : null,
             ),
             const SizedBox(height: 12),
             TextFormField(
@@ -671,6 +677,30 @@ class _AddEditReminderScreenState extends State<AddEditReminderScreen> {
                 ),
               ),
             ],
+
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: FilledButton.icon(
+                onPressed: _save,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppPalette.whatsappGreen,
+                  foregroundColor: const Color(0xFF042611),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                icon: const Icon(Icons.check_circle_rounded),
+                label: const Text(
+                  'Save Activity',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),

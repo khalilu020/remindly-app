@@ -90,10 +90,12 @@ class NotificationService {
       },
     );
 
-    final androidImpl = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
-    await androidImpl?.requestNotificationsPermission();
-    await androidImpl?.requestExactAlarmsPermission();
+    try {
+      final androidImpl = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      await androidImpl?.requestNotificationsPermission();
+      await androidImpl?.requestExactAlarmsPermission();
+    } catch (_) {}
   }
 
   /// Generates a stable positive integer base ID from a reminder UUID.
@@ -103,48 +105,58 @@ class NotificationService {
   /// Cancels all local notifications, alarms, and background WhatsApp timers.
   Future<void> cancelReminder(String reminderId) async {
     if (!_supportsMobileNotifications) return;
-    final baseId = baseIdFor(reminderId);
+    try {
+      final baseId = baseIdFor(reminderId);
 
-    for (int offset = 0; offset < 20; offset++) {
-      await _plugin.cancel(baseId + offset);
-    }
-
-    if (_supportsAndroidAlarmManager) {
       for (int offset = 0; offset < 20; offset++) {
-        await AndroidAlarmManager.cancel(baseId + offset);
+        await _plugin.cancel(baseId + offset);
       }
-    }
+
+      if (_supportsAndroidAlarmManager) {
+        for (int offset = 0; offset < 20; offset++) {
+          await AndroidAlarmManager.cancel(baseId + offset);
+        }
+      }
+    } catch (_) {}
   }
 
   /// Schedules local offline Alarm, Notification, AND background WhatsApp auto-send.
   Future<void> scheduleReminder(ReminderItem reminder) async {
     if (!_supportsMobileNotifications) return;
-    await cancelReminder(reminder.id);
+    try {
+      await cancelReminder(reminder.id);
+    } catch (_) {}
 
     if (!reminder.isEnabled) return;
     final baseId = baseIdFor(reminder.id);
 
     // 1. Local banner notification
     if (reminder.notificationEnabled) {
-      await _scheduleChannel(
-        reminder: reminder,
-        baseOffset: baseId,
-        isAlarm: false,
-      );
+      try {
+        await _scheduleChannel(
+          reminder: reminder,
+          baseOffset: baseId,
+          isAlarm: false,
+        );
+      } catch (_) {}
     }
 
     // 2. Loud local alarm sound & snooze screen
     if (reminder.alarmEnabled) {
-      await _scheduleChannel(
-        reminder: reminder,
-        baseOffset: baseId + 8,
-        isAlarm: true,
-      );
+      try {
+        await _scheduleChannel(
+          reminder: reminder,
+          baseOffset: baseId + 8,
+          isAlarm: true,
+        );
+      } catch (_) {}
     }
 
     // 3. Automated WhatsApp message dispatching directly from device
     if (reminder.whatsappEnabled && _supportsAndroidAlarmManager) {
-      await _scheduleWhatsAppAlarm(reminder, baseId + 16);
+      try {
+        await _scheduleWhatsAppAlarm(reminder, baseId + 16);
+      } catch (_) {}
     }
   }
 
@@ -152,50 +164,78 @@ class NotificationService {
     ReminderItem reminder,
     int baseOffset,
   ) async {
-    if (reminder.isRecurring) {
-      for (final weekday in reminder.daysOfWeek) {
-        final scheduled = _nextInstanceOfWeekdayTime(
-          weekday: weekday,
-          hour: reminder.hour,
-          minute: reminder.minute,
-        );
-        final exactDateTime = DateTime.fromMillisecondsSinceEpoch(
-          scheduled.millisecondsSinceEpoch,
-        );
+    try {
+      if (reminder.isRecurring) {
+        for (final weekday in reminder.daysOfWeek) {
+          final scheduled = _nextInstanceOfWeekdayTime(
+            weekday: weekday,
+            hour: reminder.hour,
+            minute: reminder.minute,
+          );
+          final exactDateTime = DateTime.fromMillisecondsSinceEpoch(
+            scheduled.millisecondsSinceEpoch,
+          );
 
-        await AndroidAlarmManager.oneShotAt(
-          exactDateTime,
-          baseOffset + weekday,
-          whatsappBackgroundDispatcher,
-          exact: true,
-          wakeup: true,
-          rescheduleOnReboot: true,
+          try {
+            await AndroidAlarmManager.oneShotAt(
+              exactDateTime,
+              baseOffset + weekday,
+              whatsappBackgroundDispatcher,
+              exact: true,
+              wakeup: true,
+              rescheduleOnReboot: true,
+            );
+          } catch (_) {
+            try {
+              await AndroidAlarmManager.oneShotAt(
+                exactDateTime,
+                baseOffset + weekday,
+                whatsappBackgroundDispatcher,
+                exact: false,
+                wakeup: true,
+                rescheduleOnReboot: true,
+              );
+            } catch (_) {}
+          }
+        }
+      } else if (reminder.oneTimeDate != null) {
+        final date = reminder.oneTimeDate!;
+        final scheduled = tz.TZDateTime(
+          tz.local,
+          date.year,
+          date.month,
+          date.day,
+          reminder.hour,
+          reminder.minute,
         );
+        if (scheduled.isAfter(tz.TZDateTime.now(tz.local))) {
+          final exactDateTime = DateTime.fromMillisecondsSinceEpoch(
+            scheduled.millisecondsSinceEpoch,
+          );
+          try {
+            await AndroidAlarmManager.oneShotAt(
+              exactDateTime,
+              baseOffset,
+              whatsappBackgroundDispatcher,
+              exact: true,
+              wakeup: true,
+              rescheduleOnReboot: true,
+            );
+          } catch (_) {
+            try {
+              await AndroidAlarmManager.oneShotAt(
+                exactDateTime,
+                baseOffset,
+                whatsappBackgroundDispatcher,
+                exact: false,
+                wakeup: true,
+                rescheduleOnReboot: true,
+              );
+            } catch (_) {}
+          }
+        }
       }
-    } else if (reminder.oneTimeDate != null) {
-      final date = reminder.oneTimeDate!;
-      final scheduled = tz.TZDateTime(
-        tz.local,
-        date.year,
-        date.month,
-        date.day,
-        reminder.hour,
-        reminder.minute,
-      );
-      if (scheduled.isAfter(tz.TZDateTime.now(tz.local))) {
-        final exactDateTime = DateTime.fromMillisecondsSinceEpoch(
-          scheduled.millisecondsSinceEpoch,
-        );
-        await AndroidAlarmManager.oneShotAt(
-          exactDateTime,
-          baseOffset,
-          whatsappBackgroundDispatcher,
-          exact: true,
-          wakeup: true,
-          rescheduleOnReboot: true,
-        );
-      }
-    }
+    } catch (_) {}
   }
 
   Future<void> _scheduleChannel({
@@ -226,18 +266,35 @@ class NotificationService {
           hour: reminder.hour,
           minute: reminder.minute,
         );
-        await _plugin.zonedSchedule(
-          baseOffset + weekday,
-          title,
-          body,
-          scheduled,
-          details,
-          payload: payload,
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-          uiLocalNotificationDateInterpretation:
-              UILocalNotificationDateInterpretation.absoluteTime,
-          matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
-        );
+        try {
+          await _plugin.zonedSchedule(
+            baseOffset + weekday,
+            title,
+            body,
+            scheduled,
+            details,
+            payload: payload,
+            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+            matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+          );
+        } catch (_) {
+          try {
+            await _plugin.zonedSchedule(
+              baseOffset + weekday,
+              title,
+              body,
+              scheduled,
+              details,
+              payload: payload,
+              androidScheduleMode: AndroidScheduleMode.inexact,
+              uiLocalNotificationDateInterpretation:
+                  UILocalNotificationDateInterpretation.absoluteTime,
+              matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+            );
+          } catch (_) {}
+        }
       }
     } else if (reminder.oneTimeDate != null) {
       final date = reminder.oneTimeDate!;
@@ -250,17 +307,33 @@ class NotificationService {
         reminder.minute,
       );
       if (scheduled.isAfter(tz.TZDateTime.now(tz.local))) {
-        await _plugin.zonedSchedule(
-          baseOffset,
-          title,
-          body,
-          scheduled,
-          details,
-          payload: payload,
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-          uiLocalNotificationDateInterpretation:
-              UILocalNotificationDateInterpretation.absoluteTime,
-        );
+        try {
+          await _plugin.zonedSchedule(
+            baseOffset,
+            title,
+            body,
+            scheduled,
+            details,
+            payload: payload,
+            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+          );
+        } catch (_) {
+          try {
+            await _plugin.zonedSchedule(
+              baseOffset,
+              title,
+              body,
+              scheduled,
+              details,
+              payload: payload,
+              androidScheduleMode: AndroidScheduleMode.inexact,
+              uiLocalNotificationDateInterpretation:
+                  UILocalNotificationDateInterpretation.absoluteTime,
+            );
+          } catch (_) {}
+        }
       }
     }
   }

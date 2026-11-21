@@ -176,23 +176,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (result == null) return;
 
-    await NotificationService.instance.scheduleReminder(result);
-
-    bool synced = false;
-    if (result.whatsappEnabled) {
-      synced = await _api.syncReminder(result, _settings);
-    } else {
-      await _api.deleteReminder(result.id);
-    }
-
-    final savedItem = result.copyWith(syncedToBackend: synced);
-
+    // 1. Immediately save to in-memory state and local disk so it is NEVER lost
     setState(() {
-      final index = _reminders.indexWhere((r) => r.id == savedItem.id);
+      final index = _reminders.indexWhere((r) => r.id == result.id);
       if (index >= 0) {
-        _reminders[index] = savedItem;
+        _reminders[index] = result;
       } else {
-        _reminders.add(savedItem);
+        _reminders.add(result);
       }
     });
     await _persistAndSort();
@@ -201,30 +191,62 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          savedItem.whatsappEnabled
-              ? (synced
-                  ? 'Activity saved & synced to WhatsApp scheduler!'
-                  : 'Saved locally (WhatsApp backend unreachable).')
-              : 'Local offline activity saved!',
+          existing == null ? 'Activity saved!' : 'Activity updated!',
         ),
+        duration: const Duration(seconds: 2),
       ),
     );
+
+    // 2. Schedule local offline alarms and notifications (safe fallback)
+    try {
+      await NotificationService.instance.scheduleReminder(result);
+    } catch (_) {}
+
+    // 3. Sync to WhatsApp cloud backend in background
+    bool synced = false;
+    try {
+      if (result.whatsappEnabled) {
+        synced = await _api.syncReminder(result, _settings);
+      } else {
+        await _api.deleteReminder(result.id);
+      }
+    } catch (_) {}
+
+    if (synced != result.syncedToBackend && mounted) {
+      final updated = result.copyWith(syncedToBackend: synced);
+      setState(() {
+        final index = _reminders.indexWhere((r) => r.id == updated.id);
+        if (index >= 0) _reminders[index] = updated;
+      });
+      await _persistAndSort();
+    }
   }
 
   Future<void> _toggleReminderEnabled(ReminderItem item, bool enabled) async {
-    var updated = item.copyWith(isEnabled: enabled);
-    await NotificationService.instance.scheduleReminder(updated);
-
-    if (updated.whatsappEnabled) {
-      final synced = await _api.syncReminder(updated, _settings);
-      updated = updated.copyWith(syncedToBackend: synced);
-    }
-
+    final updated = item.copyWith(isEnabled: enabled);
     setState(() {
       final idx = _reminders.indexWhere((r) => r.id == updated.id);
       if (idx >= 0) _reminders[idx] = updated;
     });
     await _persistAndSort();
+
+    try {
+      await NotificationService.instance.scheduleReminder(updated);
+    } catch (_) {}
+
+    if (updated.whatsappEnabled) {
+      try {
+        final synced = await _api.syncReminder(updated, _settings);
+        if (synced != updated.syncedToBackend && mounted) {
+          final withSync = updated.copyWith(syncedToBackend: synced);
+          setState(() {
+            final idx = _reminders.indexWhere((r) => r.id == withSync.id);
+            if (idx >= 0) _reminders[idx] = withSync;
+          });
+          await _persistAndSort();
+        }
+      } catch (_) {}
+    }
   }
 
   Future<void> _deleteReminder(ReminderItem item) async {
