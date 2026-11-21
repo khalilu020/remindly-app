@@ -1,22 +1,18 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:flutter/foundation.dart'
     show kIsWeb, defaultTargetPlatform, TargetPlatform;
-import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 import '../config/app_config.dart';
 import '../models/reminder_model.dart';
-import 'storage_service.dart';
-import 'whatsapp_api_service.dart';
 
 typedef AlarmTapCallback = void Function(Map<String, dynamic> payload);
 
-/// Handles offline native Mobile Alarms, Standard Push Notifications,
-/// and automated background WhatsApp message dispatching directly from the device.
+/// Handles offline native Mobile Alarms and Standard Push Notifications
+/// directly through Android's AlarmManager without any external background services.
 class NotificationService {
   NotificationService._();
   static final NotificationService instance = NotificationService._();
@@ -27,7 +23,7 @@ class NotificationService {
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
 
-  String _deviceTimezone = 'UTC';
+  String _deviceTimezone = 'Asia/Karachi';
   String get deviceTimezone => _deviceTimezone;
 
   AlarmTapCallback? onAlarmNotificationTapped;
@@ -37,50 +33,36 @@ class NotificationService {
       (defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.iOS);
 
-  bool get _supportsAndroidAlarmManager =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
-
   Future<void> init() async {
     tz_data.initializeTimeZones();
-    tz.Location? localLocation;
 
-    if (_supportsMobileNotifications) {
-      try {
-        final String detected = await FlutterTimezone.getLocalTimezone();
-        _deviceTimezone = detected;
-        try {
-          localLocation = tz.getLocation(detected);
-        } catch (_) {
-          final fallback = AppConfig.detectFallbackTimezone(detected);
-          try {
-            localLocation = tz.getLocation(fallback);
-            _deviceTimezone = fallback;
-          } catch (_) {}
+    // 1. Resolve true local timezone matching the device's clock offset
+    String detectedTz = 'Asia/Karachi';
+    try {
+      if (_supportsMobileNotifications) {
+        final platformTz = await FlutterTimezone.getLocalTimezone();
+        if (platformTz.isNotEmpty &&
+            platformTz.contains('/') &&
+            tz.timeZoneDatabase.locations.containsKey(platformTz)) {
+          detectedTz = platformTz;
         }
-      } catch (_) {}
-    }
-
-    // Fallback: match by actual device timezone offset
-    if (localLocation == null) {
-      final detectedByOffset = AppConfig.detectFallbackTimezone('');
-      try {
-        localLocation = tz.getLocation(detectedByOffset);
-        _deviceTimezone = detectedByOffset;
-      } catch (_) {
-        localLocation = tz.local;
       }
+    } catch (_) {}
+
+    // Verify against timezone database with offset fallback
+    if (!tz.timeZoneDatabase.locations.containsKey(detectedTz)) {
+      detectedTz = AppConfig.detectFallbackTimezone(detectedTz);
     }
 
-    localLocation ??= tz.getLocation('UTC');
-    tz.setLocalLocation(localLocation);
-
-    // Initialize native Android exact alarm scheduler for background execution
-    if (_supportsAndroidAlarmManager) {
-      try {
-        await AndroidAlarmManager.initialize();
-      } catch (_) {}
+    _deviceTimezone = detectedTz;
+    try {
+      final loc = tz.getLocation(detectedTz);
+      tz.setLocalLocation(loc);
+    } catch (_) {
+      tz.setLocalLocation(tz.getLocation('UTC'));
     }
 
+    // 2. Initialize FlutterLocalNotificationsPlugin safely
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings(
@@ -94,52 +76,54 @@ class NotificationService {
       iOS: iosSettings,
     );
 
-    await _plugin.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: (NotificationResponse response) {
-        if (response.payload != null && response.payload!.isNotEmpty) {
-          try {
-            final data = jsonDecode(response.payload!) as Map<String, dynamic>;
-            if (data['isAlarm'] == true) {
-              onAlarmNotificationTapped?.call(data);
-            }
-          } catch (_) {}
-        }
-      },
-    );
-
-    // Explicitly create notification channels with max importance on Android
-    final androidImpl = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
-
-    const alarmChannel = AndroidNotificationChannel(
-      _alarmChannelId,
-      'Reminder Alarms',
-      description: 'High-priority loud alarm alerts for scheduled activities',
-      importance: Importance.max,
-      playSound: true,
-      enableVibration: true,
-      enableLights: true,
-      audioAttributesUsage: AudioAttributesUsage.alarm,
-    );
-
-    const standardChannel = AndroidNotificationChannel(
-      _notificationChannelId,
-      'Activity Notifications',
-      description: 'Standard reminder notifications for scheduled activities',
-      importance: Importance.max,
-      playSound: true,
-      enableVibration: true,
-      enableLights: true,
-    );
-
     try {
+      await _plugin.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: (NotificationResponse response) {
+          if (response.payload != null && response.payload!.isNotEmpty) {
+            try {
+              final data = jsonDecode(response.payload!) as Map<String, dynamic>;
+              if (data['isAlarm'] == true) {
+                onAlarmNotificationTapped?.call(data);
+              }
+            } catch (_) {}
+          }
+        },
+      );
+    } catch (_) {}
+
+    // 3. Create high-priority notification channels on Android
+    try {
+      final androidImpl = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+
+      const alarmChannel = AndroidNotificationChannel(
+        _alarmChannelId,
+        'Reminder Alarms',
+        description: 'High-priority loud alarm alerts for scheduled activities',
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+        enableLights: true,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
+      );
+
+      const standardChannel = AndroidNotificationChannel(
+        _notificationChannelId,
+        'Activity Notifications',
+        description: 'Standard reminder notifications for scheduled activities',
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+        enableLights: true,
+      );
+
       await androidImpl?.createNotificationChannel(alarmChannel);
       await androidImpl?.createNotificationChannel(standardChannel);
     } catch (_) {}
   }
 
-  /// Requests notification and exact alarm permissions at runtime when the UI is displayed.
+  /// Requests notification and exact alarm permissions at runtime.
   Future<void> requestPermissions() async {
     if (!_supportsMobileNotifications) return;
     try {
@@ -159,25 +143,18 @@ class NotificationService {
   static int baseIdFor(String reminderId) =>
       (reminderId.hashCode.abs() % 100000) * 20;
 
-  /// Cancels all local notifications, alarms, and background WhatsApp timers.
+  /// Cancels all local notifications and alarms for a reminder.
   Future<void> cancelReminder(String reminderId) async {
     if (!_supportsMobileNotifications) return;
     try {
       final baseId = baseIdFor(reminderId);
-
       for (int offset = 0; offset < 20; offset++) {
         await _plugin.cancel(baseId + offset);
-      }
-
-      if (_supportsAndroidAlarmManager) {
-        for (int offset = 0; offset < 20; offset++) {
-          await AndroidAlarmManager.cancel(baseId + offset);
-        }
       }
     } catch (_) {}
   }
 
-  /// Schedules local offline Alarm, Notification, AND background WhatsApp auto-send.
+  /// Schedules local offline Alarm and Notification.
   Future<void> scheduleReminder(ReminderItem reminder) async {
     if (!_supportsMobileNotifications) return;
     try {
@@ -198,7 +175,7 @@ class NotificationService {
       } catch (_) {}
     }
 
-    // 2. Loud local alarm sound & snooze screen
+    // 2. Loud local alarm sound
     if (reminder.alarmEnabled) {
       try {
         await _scheduleChannel(
@@ -208,93 +185,6 @@ class NotificationService {
         );
       } catch (_) {}
     }
-
-    // 3. Automated WhatsApp message dispatching directly from device
-    if (reminder.whatsappEnabled && _supportsAndroidAlarmManager) {
-      try {
-        await _scheduleWhatsAppAlarm(reminder, baseId + 16);
-      } catch (_) {}
-    }
-  }
-
-  Future<void> _scheduleWhatsAppAlarm(
-    ReminderItem reminder,
-    int baseOffset,
-  ) async {
-    try {
-      if (reminder.isRecurring) {
-        for (final weekday in reminder.daysOfWeek) {
-          final scheduled = _nextInstanceOfWeekdayTime(
-            weekday: weekday,
-            hour: reminder.hour,
-            minute: reminder.minute,
-          );
-          final exactDateTime = DateTime.fromMillisecondsSinceEpoch(
-            scheduled.millisecondsSinceEpoch,
-          );
-
-          try {
-            await AndroidAlarmManager.oneShotAt(
-              exactDateTime,
-              baseOffset + weekday,
-              whatsappBackgroundDispatcher,
-              exact: true,
-              wakeup: true,
-              rescheduleOnReboot: true,
-            );
-          } catch (_) {
-            try {
-              await AndroidAlarmManager.oneShotAt(
-                exactDateTime,
-                baseOffset + weekday,
-                whatsappBackgroundDispatcher,
-                exact: false,
-                wakeup: true,
-                rescheduleOnReboot: true,
-              );
-            } catch (_) {}
-          }
-        }
-      } else if (reminder.oneTimeDate != null) {
-        final date = reminder.oneTimeDate!;
-        final scheduled = tz.TZDateTime(
-          tz.local,
-          date.year,
-          date.month,
-          date.day,
-          reminder.hour,
-          reminder.minute,
-          0,
-        );
-        final now = tz.TZDateTime.now(tz.local);
-        if (scheduled.isAfter(now)) {
-          final exactDateTime = DateTime.fromMillisecondsSinceEpoch(
-            scheduled.millisecondsSinceEpoch,
-          );
-          try {
-            await AndroidAlarmManager.oneShotAt(
-              exactDateTime,
-              baseOffset,
-              whatsappBackgroundDispatcher,
-              exact: true,
-              wakeup: true,
-              rescheduleOnReboot: true,
-            );
-          } catch (_) {
-            try {
-              await AndroidAlarmManager.oneShotAt(
-                exactDateTime,
-                baseOffset,
-                whatsappBackgroundDispatcher,
-                exact: false,
-                wakeup: true,
-                rescheduleOnReboot: true,
-              );
-            } catch (_) {}
-          }
-        }
-      }
-    } catch (_) {}
   }
 
   Future<void> _scheduleChannel({
@@ -461,12 +351,12 @@ class NotificationService {
     );
 
     if (scheduled.weekday == weekday &&
-        scheduled.isAfter(now.add(const Duration(seconds: 3)))) {
+        scheduled.isAfter(now.add(const Duration(seconds: 5)))) {
       return scheduled;
     }
 
     while (scheduled.weekday != weekday ||
-        !scheduled.isAfter(now.add(const Duration(seconds: 3)))) {
+        !scheduled.isAfter(now.add(const Duration(seconds: 5)))) {
       scheduled = scheduled.add(const Duration(days: 1));
     }
     return scheduled;
@@ -515,7 +405,6 @@ class NotificationService {
   }
 
   /// Instantly schedules a test Notification and Alarm 5 seconds from now.
-  /// Allows users to immediately verify sound, banner, and lock-screen alerts.
   Future<void> testAlarmAndNotification() async {
     if (!_supportsMobileNotifications) return;
     final now = tz.TZDateTime.now(tz.local);
@@ -590,48 +479,4 @@ class NotificationService {
       } catch (_) {}
     }
   }
-}
-
-/// Standalone background execution entry point called by AndroidAlarmManager
-/// when an exact scheduled time hits — even if the phone is locked or app is closed.
-@pragma('vm:entry-point')
-void whatsappBackgroundDispatcher(int id) async {
-  WidgetsFlutterBinding.ensureInitialized();
-  try {
-    final storage = StorageService();
-    final settings = await storage.loadSettings();
-
-    final reminders = await storage.loadReminders();
-    ReminderItem? matched;
-
-    for (final r in reminders) {
-      final base = NotificationService.baseIdFor(r.id);
-      if (id >= base && id <= base + 24) {
-        matched = r;
-        break;
-      }
-    }
-
-    if (matched != null && matched.isEnabled && matched.whatsappEnabled) {
-      final msg = matched.customWhatsAppMessage.isNotEmpty
-          ? matched.customWhatsAppMessage
-          : '⏰ *Reminder: ${matched.title}*\n🕒 Scheduled Time: ${matched.formattedTime12}${matched.note.isNotEmpty ? '\n📝 ${matched.note}' : ''}';
-
-      final targetPhone =
-          matched.resolvePhoneNumber(settings.defaultWhatsAppNumber);
-
-      final api = WhatsAppApiService();
-      await api.sendInstantWhatsApp(
-        settings: settings,
-        phoneNumber: targetPhone,
-        message: msg,
-        title: matched.title,
-      );
-
-      // If it's a recurring weekly reminder, reschedule next week's occurrence
-      if (matched.isRecurring) {
-        await NotificationService.instance.scheduleReminder(matched);
-      }
-    }
-  } catch (_) {}
 }

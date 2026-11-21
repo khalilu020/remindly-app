@@ -44,7 +44,9 @@ class AppConfig {
 
   /// Best-effort automatic local timezone detection (including Chrome/Web).
   static String detectFallbackTimezone(String deviceTimezone) {
-    if (deviceTimezone.isNotEmpty && deviceTimezone != 'UTC') {
+    if (deviceTimezone.isNotEmpty &&
+        deviceTimezone != 'UTC' &&
+        deviceTimezone.contains('/')) {
       return deviceTimezone;
     }
     final offsetMinutes = DateTime.now().timeZoneOffset.inMinutes;
@@ -60,6 +62,6 @@ class AppConfig {
       -300: 'America/New_York',
       -480: 'America/Los_Angeles',
     };
-    return offsetToIana[offsetMinutes] ?? 'UTC';
+    return offsetToIana[offsetMinutes] ?? 'Asia/Karachi';
   }
 }

@@ -1,0 +1,16 @@
+name: 24/7 Cloud Server Keep-Alive
+
+on:
+  schedule:
+    # Run every 5 minutes to keep SnapDeploy container warm and awake
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Remindly Backend & Wake Container
+        run: |
+          curl -s -X POST https://snapdeploy.dev/api/public/wake/remindly-bot-cc713 || true
+          curl -s https://remindly-bot-cc713.containers.snapdeploy.app/health || true

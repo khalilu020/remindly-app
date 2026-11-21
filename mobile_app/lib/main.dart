@@ -1,12 +1,27 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'screens/home_screen.dart';
 import 'services/notification_service.dart';
 import 'theme/app_theme.dart';
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await NotificationService.instance.init();
-  runApp(const WhatsAppReminderApp());
+void main() {
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+      debugPrint('Remindly Flutter Error: ${details.exception}');
+    };
+
+    try {
+      await NotificationService.instance.init();
+    } catch (e, stack) {
+      debugPrint('NotificationService init warning: $e\n$stack');
+    }
+
+    runApp(const WhatsAppReminderApp());
+  }, (error, stack) {
+    debugPrint('Remindly Unhandled Async Error: $error\n$stack');
+  });
 }
 
 class WhatsAppReminderApp extends StatefulWidget {
